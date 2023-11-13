@@ -15,20 +15,19 @@ public class Device {
         freeSpace = capacity - takenSpace;
     }
 
-    public synchronized void askForSpace(ComponentTransfer transfer) {
-        waiting.add(transfer);
+    public void waitForMyTurn(ComponentTransfer transfer) {
+        synchronized (this) {
+            waiting.add(transfer);
+
+            while (freeSpace == 0 || waiting.peek() != transfer) {
+                wait();
+            }
+
+            freeSpace--;
+            waiting.remove();
+        }
     }
     
-    public synchronized Boolean isMyTurn(ComponentTransfer transfer) {
-        if (!freeSpace) return false;
-        if (waiting.peek() != transfer) return false;
-        return true;
-    }
-
-    public synchronized void startExecuting() {
-        waiting.remove();
-    }
-
     public synchronized void freeSpace() {
         freeSpace++;
         notifyAll();

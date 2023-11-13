@@ -24,35 +24,42 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     public void execute(ComponentTransfer transfer) throws TransferException {
-        throw new RuntimeException("Not Implemented");
         // check if transfer is legal
         // mark component as beingOperatedOn
         // execute correct type of transfer
         // mark component as no longer beingOperatedOn
+        throw new RuntimeException("Not Implemented");
     }
 
     private void executeAdd(ComponentTransfer transfer) throws TransferException {
-        throw new RuntimeException("Not Implemented");
+        Device destinationDevice = devicesById.get(transfer.getDestinationDeviceId());
+
+        transfer.prepare();
+        destinationDevice.waitForMyTurn();
+        transfer.perform();
+
+        componentPlacement.put(transfer.getComponentId(), transfer.getDestinationDeviceId());
     }
 
-    private void executeTransfer(ComponentTransfer transfer) throws TransferException {
-        Device D1 = devicesById.get(transfer.getSourceDeviceId());
-        Device D2 = devicesById.get(transfer.getDestinationDeviceId());
+    private void executeMove(ComponentTransfer transfer) throws TransferException { 
+        Device sourceDevice = devicesById.get(transfer.getSourceDeviceId());
+        Device destinationDevice = devicesById.get(transfer.getDestinationDeviceId());
         
         transfer.prepare();
-        D1.freeSpace();
+        sourceDevice.freeSpace();
+        destinationDevice.waitForMyTurn();
+        transfer.perform();
 
-        D2.askForSpace();
-        while (!D2.isMyTurn()) { 
-            
-        }
-        // Wait for slot on D2
-        // perform
-        // change component's location
-        throw new RuntimeException("Not Implemented");
+        componentPlacement.put(transfer.getComponentId(), transfer.getDestinationDeviceId());
     }
 
     private void executeRemove(ComponentTransfer transfer) throws TransferException {
-        throw new RuntimeException("Not Implemented");
+        Device sourceDevice = devicesById.get(transfer.getSourceDeviceId());
+
+        transfer.prepare();
+        sourceDevice.freeSpace();
+        transfer.perform();
+
+        componentPlacement.remove(transfer.getComponentId());
     }
 }
