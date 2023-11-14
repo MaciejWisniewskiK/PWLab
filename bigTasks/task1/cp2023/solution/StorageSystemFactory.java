@@ -19,8 +19,8 @@ public final class StorageSystemFactory {
     public static StorageSystem newSystem(
             Map<DeviceId, Integer> deviceTotalSlots,
             Map<ComponentId, DeviceId> componentPlacement) {
-        // FIXME: implement
-        throw new RuntimeException("not implemented");
+        
+        return new MyStorageSystem(deviceTotalSlots, componentPlacement);
     }
 
 }

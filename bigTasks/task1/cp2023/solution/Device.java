@@ -15,17 +15,15 @@ public class Device {
         freeSpace = capacity - takenSpace;
     }
 
-    public void waitForMyTurn(ComponentTransfer transfer) {
-        synchronized (this) {
-            waiting.add(transfer);
+    public synchronized void waitForMyTurn(ComponentTransfer transfer) throws InterruptedException {
+        waiting.add(transfer);
 
-            while (freeSpace == 0 || waiting.peek() != transfer) {
-                wait();
-            }
-
-            freeSpace--;
-            waiting.remove();
+        while (freeSpace == 0 || waiting.peek() != transfer) {
+            wait();
         }
+
+        freeSpace--;
+        waiting.remove();
     }
     
     public synchronized void freeSpace() {
