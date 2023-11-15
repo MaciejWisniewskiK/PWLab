@@ -1,0 +1,1 @@
+javac cp2023/base/*.java cp2023/exceptions/*.java cp2023/solution/*.java cp2023/demo/*.java
