@@ -15,7 +15,7 @@ import cp2023.base.DeviceId;
 import cp2023.base.StorageSystem;
 import cp2023.base.ComponentTransfer;
 
-import cp2023.exceptions.TransferException;
+import cp2023.exceptions.*;
 
 public class MyStorageSystem implements StorageSystem {
 
@@ -26,8 +26,8 @@ public class MyStorageSystem implements StorageSystem {
 
 
     private Semaphore GM = new Semaphore(1, true); // Graph mutex
-    private Map<DeviceId, Integer> deviceFreeSlots = new HashMap<>();
-    private Map<DeviceId, LinkedList<ComponentTransfer> > waitingForImport = new HashMap<>();
+    private Map<DeviceId, Integer> deviceFreeSlots = new ConcurrentHashMap<>();
+    private Map<DeviceId, LinkedList<ComponentTransfer> > waitingForImport = new ConcurrentHashMap<>();
 
     private Map<ComponentTransfer, Semaphore> waitForStart = new ConcurrentHashMap<>(); 
     private Map<ComponentTransfer, ComponentTransfer> prevTransfer = new ConcurrentHashMap<>(); 
@@ -35,14 +35,14 @@ public class MyStorageSystem implements StorageSystem {
     private Map<ComponentTransfer, Boolean> lazyRemove = new ConcurrentHashMap<>();
 
     public MyStorageSystem(Map<DeviceId, Integer> deviceTotalSlots, Map<ComponentId, DeviceId> componentPlacement) {
-        this.componentPlacement = new HashMap(componentPlacement);
-        this.deviceTotalSlots = new HashMap(deviceTotalSlots);
+        this.componentPlacement = new ConcurrentHashMap(componentPlacement);
+        this.deviceTotalSlots = new ConcurrentHashMap(deviceTotalSlots);
     
         for (DeviceId deviceId : deviceTotalSlots.keySet()) {
             waitingForImport.put(deviceId, new LinkedList<>());
         }
 
-        deviceFreeSlots = new HashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for eevery component stored
+        deviceFreeSlots = new ConcurrentHashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for eevery component stored
         for (Map.Entry<ComponentId, DeviceId> entry : componentPlacement.entrySet()) {
             deviceFreeSlots.put(entry.getValue(), deviceFreeSlots.get(entry.getValue()) - 1); 
         }
@@ -50,10 +50,10 @@ public class MyStorageSystem implements StorageSystem {
 
     public void execute(ComponentTransfer transfer) throws TransferException {
         checkIfTransferLegal(transfer); // throws exception if not
-
+        // COMPONENT PLACEMENT!!!!!!!!!!!!!!!!!!!!!!!!!!
         //GM.acquire();
         waitForStart.put(transfer, new Semaphore(1, true)); // create my semaphore
-        prevTransfer.put(transfer, null);
+        prevTransfer.put(transfer, transfer);
         //GM.release();
 
         if (transfer.getDestinationDeviceId() == null) { // If the transfer is a removal of a file, immidiately start
@@ -111,12 +111,24 @@ public class MyStorageSystem implements StorageSystem {
         start(transfer);
     }
 
-    void checkIfTransferLegal(ComponentTransfer transfer) {
-        throw new RuntimeException("Not Implemented");
+    void checkIfTransferLegal(ComponentTransfer transfer) throws TransferException {
+        if (transfer.getSourceDeviceId() == null && transfer.getDestinationDeviceId() == null)
+            throw new IllegalTransferType(transfer.getComponentId());
+        if (transfer.getDestinationDeviceId() != null && !deviceTotalSlots.containsKey(transfer.getDestinationDeviceId())) 
+            throw new DeviceDoesNotExist(transfer.getDestinationDeviceId());
+        if (transfer.getSourceDeviceId() == null && componentPlacement.containsKey(transfer.getComponentId()))
+            throw new ComponentAlreadyExists(transfer.getComponentId()); // SECOND CONSTRUCTOR
+        if (transfer.getSourceDeviceId() != null && (!componentPlacement.containsKey(transfer.getComponentId()) || !componentPlacement.get(transfer.getComponentId()).equals(transfer.getSourceDeviceId()))) 
+            throw new ComponentDoesNotExist(transfer.getComponentId(), transfer.getSourceDeviceId());
+        if (componentPlacement.containsKey(transfer.getComponentId()) && componentPlacement.get(transfer.getComponentId()) == null)
+            throw new ComponentIsBeingOperatedOn(transfer.getComponentId());
+        if (transfer.getSourceDeviceId() == transfer.getDestinationDeviceId())
+            throw new ComponentDoesNotNeedTransfer(transfer.getComponentId(), transfer.getDestinationDeviceId());
     }
 
     void start(ComponentTransfer transfer) {
         // remove waitforstart and prevtransfer
+        // if prevtransfer == transfer than no prevtransfer
         throw new RuntimeException("Not Implemented");
     }
 
