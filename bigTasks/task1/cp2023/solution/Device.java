@@ -7,66 +7,13 @@ import cp2023.base.ComponentTransfer;
 
 public class Device {
 
-    private Queue<MyTransfer> waitingImport = new LinkedList<>();
     private LinkedList<MyTransfer> waitingExport = new LinkedList<>();
+    private LinkedList<MyTransfer> waitingImport = new LinkedList<>();
+    private Integer capacity, freeSlots;
 
-    private Integer freeSpace, capacity;
-
-    public Device(Integer capacity, Integer takenSpace) {
+    public Device(Integer capacity, Integer takenSlots) {
         this.capacity = capacity;
-        freeSpace = capacity - takenSpace;
-    }
-
-    public synchronized Boolean waitForSlot(MyTransfer transfer) throws InterruptedException {
-        waitingImport.add(transfer);
-
-        while (freeSpace == 0 || waiting.peek() != transfer) {
-            wait();
-        } 
-
-        waitingImport.remove();
-
-        Boolean transferWasExecutedBefore;
-        synchronized (transfer) {
-            transferWasExecutedBefore = transfer.getExecuted();
-            transfer.markAsExecuted();
-        }
-
-        if (transferWasExecutedBefore) {        
-            notifyAll();
-            return false;
-        }
-
-        freeSpace--;
-        notifyAll();
-        return true;
-    }
-
-    public synchronized void freeSlot() {
-        freeSpace++;
-        notifyAll();
-    }
-
-    public void giveSlotTo(MyTransfer transfer) {
-        synchronized (transfer) {
-            
-        }
-    }
-
-
-    /*public synchronized void waitForMyTurn(ComponentTransfer transfer) throws InterruptedException {
-        waiting.add(transfer);
-
-        while (freeSpace == 0 || waiting.peek() != transfer) {
-            wait();
-        }
-
-        freeSpace--;
-        waiting.remove();
+        this.freeSlots = capacity - takenSlots;
     }
     
-    public synchronized void freeSpace() {
-        freeSpace++;
-        notifyAll();
-    }*/
 }
