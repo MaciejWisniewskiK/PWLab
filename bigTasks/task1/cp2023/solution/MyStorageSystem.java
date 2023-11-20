@@ -2,6 +2,13 @@ package cp2023.solution;
 
 import java.util.Map;
 import java.util.HashMap;
+import java.util.List;
+import java.util.LinkedList;
+import java.util.Set;
+import java.util.HashSet;
+
+import java.util.concurrent.Semaphore;
+import java.util.concurrent.ConcurrentHashMap;
 
 import cp2023.base.ComponentId;
 import cp2023.base.DeviceId;
@@ -24,7 +31,8 @@ public class MyStorageSystem implements StorageSystem {
 
     private Map<ComponentTransfer, Semaphore> waitForStart = new ConcurrentHashMap<>(); 
     private Map<ComponentTransfer, ComponentTransfer> prevTransfer = new ConcurrentHashMap<>(); 
-    private Set<ComponentTransfer> lazyRemove = new ConcurrentHashSet<>();
+
+    private Map<ComponentTransfer, Boolean> lazyRemove = new ConcurrentHashMap<>();
 
     public MyStorageSystem(Map<DeviceId, Integer> deviceTotalSlots, Map<ComponentId, DeviceId> componentPlacement) {
         this.componentPlacement = new HashMap(componentPlacement);
@@ -34,16 +42,16 @@ public class MyStorageSystem implements StorageSystem {
             waitingForImport.put(deviceId, new LinkedList<>());
         }
 
-        this.deviceFreeSlots = new HashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for eevery component stored
+        deviceFreeSlots = new HashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for eevery component stored
         for (Map.Entry<ComponentId, DeviceId> entry : componentPlacement.entrySet()) {
-            deviceFreeSlots.put(entry.getValue(), deviceFreeSlots.get(entry.getKey()) - 1); 
+            deviceFreeSlots.put(entry.getValue(), deviceFreeSlots.get(entry.getValue()) - 1); 
         }
     }
 
     public void execute(ComponentTransfer transfer) throws TransferException {
         checkIfTransferLegal(transfer); // throws exception if not
 
-        //GM.aquire();
+        //GM.acquire();
         waitForStart.put(transfer, new Semaphore(1, true)); // create my semaphore
         prevTransfer.put(transfer, null);
         //GM.release();
@@ -52,10 +60,15 @@ public class MyStorageSystem implements StorageSystem {
             start(transfer);
             return;
         }
+ 
+        try {
+            GM.acquire();
+        } catch(InterruptedException e) {
+            throw new RuntimeException("panic: unexpected thread interruption");
+        }
 
-        GM.aquire();
         if (deviceFreeSlots.get(transfer.getDestinationDeviceId()) > 0) { 
-            deviceFreeSlots.put(trranfer.getDestinationDeviceId(), deviceTotalSlots.get(transfer.getDestinationDeviceId()) - 1); // take one slot
+            deviceFreeSlots.put(transfer.getDestinationDeviceId(), deviceTotalSlots.get(transfer.getDestinationDeviceId()) - 1); // take one slot
             GM.release();
             start(transfer);
             return;
@@ -66,27 +79,33 @@ public class MyStorageSystem implements StorageSystem {
         if (cycle == null) {
             waitingForImport.get(transfer.getDestinationDeviceId()).add(transfer);
             GM.release();
-            waitForStart.get(transfer).aquire();
+
+            try {
+                waitForStart.get(transfer).acquire();
+            } catch(InterruptedException e) {
+                throw new RuntimeException("panic: unexpected thread interruption");
+            }
             start(transfer);
             return;
         }
 
         for (ComponentTransfer ct : cycle) {
-            lazyRemove.add(ct);
+            lazyRemove.put(ct, true);
         }
         GM.release();
 
         // assumes _transfer_ is from the first elements DD to the last elements SD
-        ComponentTransfer nextCT = transfer, currentCT;
-        for (currentCT : cycle) {
+        ComponentTransfer nextCT = transfer, currentCT = null;
+        for (ComponentTransfer ct : cycle) {
+            currentCT = ct;
             prevTransfer.put(nextCT, currentCT);
         }
         prevTransfer.put(currentCT, transfer);
 
         //GM.release();
 
-        for (currentCT : cycle) {
-            waitForStart.get(currentCT).release();
+        for (ComponentTransfer ct : cycle) {
+            waitForStart.get(ct).release();
         }
 
         start(transfer);
@@ -97,6 +116,7 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     void start(ComponentTransfer transfer) {
+        // remove waitforstart and prevtransfer
         throw new RuntimeException("Not Implemented");
     }
 
