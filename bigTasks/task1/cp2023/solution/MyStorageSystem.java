@@ -79,7 +79,7 @@ public class MyStorageSystem implements StorageSystem {
         List<ComponentTransfer> cycle = getCycle(transfer); // null if no cycle, doesn't include itself
 
         if (cycle == null) {
-            waitingForImport.get(transfer.getDestinationDeviceId()).add(transfer);
+            waitingForImport.get(transfer.getDestinationDeviceId()).addLast(transfer);
             GM.release();
 
             try {
@@ -153,7 +153,8 @@ public class MyStorageSystem implements StorageSystem {
 
             GM.release();
 
-            waitForStart.get(prevTransfer.get(transfer)).release();
+            if (prevTransfer.get(transfer) != transfer)
+                waitForStart.get(prevTransfer.get(transfer)).release();
         }
 
         transfer.prepare();
@@ -184,7 +185,35 @@ public class MyStorageSystem implements StorageSystem {
         nextTransfer.remove(transfer);
     }
 
+    // null if no cycle, the cycle doesn't include itself
     List <ComponentTransfer> getCycle(ComponentTransfer transfer) {
-        throw new RuntimeException("Not Implemented");
+        if (transfer.getSourceDeviceId() == null || transfer.getDestinationDeviceId() == null)
+            return null;
+
+        Map<DeviceId, Boolean> visited = new HashMap<>();
+        for (DeviceId deviceId : deviceTotalSlots.keySet()) {
+            visited.put(deviceId, false);
+        }
+
+        LinkedList <ComponentTransfer> res = new LinkedList<>();
+
+        if (dfs(transfer.getSourceDeviceId(), transfer.getDestinationDeviceId(), visited, res))
+            return res;
+        return null;
+    }
+
+    Boolean dfs(DeviceId current, DeviceId destination, Map<DeviceId, Boolean> visited, LinkedList<ComponentTransfer> res) {
+        visited.put(current, true);
+
+        for (ComponentTransfer edge : waitingForImport.get(current)) {
+            if (lazyRemove.containsKey(edge) || edge.getSourceDeviceId() == null || visited.get(edge.getSourceDeviceId()))
+                continue;
+            res.addLast(edge);
+            if (dfs(edge.getSourceDeviceId(), destination, visited, res))
+                return true;
+            res.removeLast();
+        }
+
+        return false;
     }
 }
