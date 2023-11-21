@@ -21,60 +21,80 @@ public class MyStorageSystem implements StorageSystem {
 
     private Map<DeviceId, Integer> deviceTotalSlots;
 
+    // Up to date component placement, removed if component has left the system
     private Semaphore componentPlacementMutex = new Semaphore(1, true);
-    private Map<ComponentId, DeviceId> componentPlacement; // null -> currently being transfered
+    private Map<ComponentId, DeviceId> componentPlacement;
+    private Map<ComponentId, Boolean> isBeingTransfered                         = new ConcurrentHashMap<>();
 
+    // A mutex for searching/modifying the graph (deviceFreeSlots andwaitingForImport)
+    private Semaphore GM = new Semaphore(1, true);
+    private Map<DeviceId, Integer> deviceFreeSlots                              = new ConcurrentHashMap<>();
+    private Map<DeviceId, LinkedList<ComponentTransfer> > waitingForImport      = new ConcurrentHashMap<>();
 
-    private Semaphore GM = new Semaphore(1, true); // Graph mutex
-    private Map<DeviceId, Integer> deviceFreeSlots = new ConcurrentHashMap<>();
-    private Map<DeviceId, LinkedList<ComponentTransfer> > waitingForImport = new ConcurrentHashMap<>();
+    // A transfer-specyfic semaphores and a transfer that I have to wait for (next) or is waiting for me (prev)
+    // If I am not waiting for any transfer / no transfer is waiting for me than next/prev[me] = me
+    private Map<ComponentTransfer, Semaphore> waitForStart                      = new ConcurrentHashMap<>(); 
+    private Map<ComponentTransfer, Semaphore> waitForNextTransfer               = new ConcurrentHashMap<>(); 
+    private Map<ComponentTransfer, ComponentTransfer> prevTransfer              = new ConcurrentHashMap<>();
+    private Map<ComponentTransfer, ComponentTransfer> nextTransfer              = new ConcurrentHashMap<>();
 
-    private Map<ComponentTransfer, Semaphore> waitForStart = new ConcurrentHashMap<>(); 
-    private Map<ComponentTransfer, ComponentTransfer> prevTransfer = new ConcurrentHashMap<>();
-    private Map<ComponentTransfer, ComponentTransfer> nextTransfer = new ConcurrentHashMap<>();
-
-    private Map<ComponentTransfer, Boolean> lazyRemove = new ConcurrentHashMap<>();
+    // private Map<ComponentTransfer, Boolean> lazyRemove = new ConcurrentHashMap<>();
 
     public MyStorageSystem(Map<DeviceId, Integer> deviceTotalSlots, Map<ComponentId, DeviceId> componentPlacement) {
         this.componentPlacement = new ConcurrentHashMap(componentPlacement);
         this.deviceTotalSlots = new ConcurrentHashMap(deviceTotalSlots);
-    
+
+        for (ComponentId componentId : componentPlacement.keySet()) {
+            isBeingTransfered.put(componentId, false);
+        }
+        
+        // Creating empty graph
         for (DeviceId deviceId : deviceTotalSlots.keySet()) {
             waitingForImport.put(deviceId, new LinkedList<>());
         }
-
-        deviceFreeSlots = new ConcurrentHashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for every component stored
+    
+        // Calculating starting number of free slots
+        deviceFreeSlots = new ConcurrentHashMap(deviceTotalSlots); 
         for (Map.Entry<ComponentId, DeviceId> entry : componentPlacement.entrySet()) {
             deviceFreeSlots.put(entry.getValue(), deviceFreeSlots.get(entry.getValue()) - 1); 
         }
     }
 
     public void execute(ComponentTransfer transfer) throws TransferException {
-        checkIfTransferLegal(transfer); // throws exception if not
-        // COMPONENT PLACEMENT!!!!!!!!!!!!!!!!!!!!!!!!!!
-        //GM.acquire();
-        waitForStart.put(transfer, new Semaphore(1, true)); // create my semaphore
+        
+        // Check if transfer is legal and mark component as being transfered
+        acquire(componentPlacementMutex);
+        checkIfTransferLegal(transfer); 
+        isBeingTransfered.put(transfer.getComponentId(), true);
+        componentPlacementMutex.release();
+
+        // Create and initialize transfer specyfic values
+        waitForStart.put(transfer, new Semaphore(1, true));
+        waitForNextTransfer.put(transfer, new Semaphore(1, true));
         acquire(waitForStart.get(transfer));
+        acquire(waitForNextTransfer.get(transfer));
         prevTransfer.put(transfer, transfer);
         nextTransfer.put(transfer, transfer);
-        //GM.release();
 
-        if (transfer.getDestinationDeviceId() == null) { // If the transfer is a removal of a file, immidiately start
+        // If the transfer is a removal of a file, immidiately start
+        if (transfer.getDestinationDeviceId() == null) { 
             start(transfer);
             return;
         }
  
         acquire(GM);
-
+        // If there is free slot on destination device, take it and start
         if (deviceFreeSlots.get(transfer.getDestinationDeviceId()) > 0) { 
-            deviceFreeSlots.put(transfer.getDestinationDeviceId(), deviceTotalSlots.get(transfer.getDestinationDeviceId()) - 1); // take one slot
+            deviceFreeSlots.put(transfer.getDestinationDeviceId(), deviceTotalSlots.get(transfer.getDestinationDeviceId()) - 1);
             GM.release();
             start(transfer);
             return;
         }
 
-        List<ComponentTransfer> cycle = getCycle(transfer); // null if no cycle, doesn't include itself
+        // If there is a cycle, return it in order from source to destination without myself, otherwise return null
+        List<ComponentTransfer> cycle = getCycle(transfer);
 
+        // If there is no cycle add myself to the graph and wait on my semaphore
         if (cycle == null) {
             waitingForImport.get(transfer.getDestinationDeviceId()).addLast(transfer);
             GM.release();
@@ -82,13 +102,15 @@ public class MyStorageSystem implements StorageSystem {
             start(transfer);
             return;
         }
-
+        
+        // Remove all of the cycle from the graph
         for (ComponentTransfer ct : cycle) {
-            lazyRemove.put(ct, true);
+            waitingForImport.get(ct.getDestinationDeviceId()).remove(ct);
+            // lazyRemove.put(ct, true);
         }
         GM.release();
 
-        // assumes _transfer_ is from the first elements DD to the last elements SD
+        // Set the prevTransfer and nextTransfer for all transfers in cycle
         ComponentTransfer nextCT = transfer, currentCT = null;
         for (ComponentTransfer ct : cycle) {
             currentCT = ct;
@@ -98,39 +120,58 @@ public class MyStorageSystem implements StorageSystem {
         prevTransfer.put(currentCT, transfer);
         nextTransfer.put(transfer, currentCT);
 
+        // Release all transfers from the cycle
         for (ComponentTransfer ct : cycle) {
             waitForStart.get(ct).release();
         }
 
         start(transfer);
+
+        // update component placement
+        acquire(componentPlacementMutex);
+        if (transfer.getDestinationDeviceId() == null) {
+            componentPlacement.remove(transfer.getComponentId());
+            isBeingTransfered.remove(transfer.getComponentId());
+        }
+        else {
+            componentPlacement.put(transfer.getComponentId(), transfer.getDestinationDeviceId());
+            isBeingTransfered.put(transfer.getComponentId(), false);
+        }
+        componentPlacementMutex.release();
     }
 
     void checkIfTransferLegal(ComponentTransfer transfer) throws TransferException {
-        if (transfer.getSourceDeviceId() == null && transfer.getDestinationDeviceId() == null)
-            throw new IllegalTransferType(transfer.getComponentId());
-        if (transfer.getDestinationDeviceId() != null && !deviceTotalSlots.containsKey(transfer.getDestinationDeviceId())) 
-            throw new DeviceDoesNotExist(transfer.getDestinationDeviceId());
-        if (transfer.getSourceDeviceId() == null && componentPlacement.containsKey(transfer.getComponentId()))
-            throw new ComponentAlreadyExists(transfer.getComponentId()); // SECOND CONSTRUCTOR
-        if (transfer.getSourceDeviceId() != null && (!componentPlacement.containsKey(transfer.getComponentId()) || !componentPlacement.get(transfer.getComponentId()).equals(transfer.getSourceDeviceId()))) 
-            throw new ComponentDoesNotExist(transfer.getComponentId(), transfer.getSourceDeviceId());
-        if (componentPlacement.containsKey(transfer.getComponentId()) && componentPlacement.get(transfer.getComponentId()) == null)
+        if (componentPlacement.containsKey(transfer.getComponentId()) && isBeingTransfered.get(transfer.getComponentId())){
+            componentPlacementMutex.release();
             throw new ComponentIsBeingOperatedOn(transfer.getComponentId());
-        if (transfer.getSourceDeviceId() == transfer.getDestinationDeviceId())
+        }
+        if (transfer.getSourceDeviceId() == null && transfer.getDestinationDeviceId() == null){
+            componentPlacementMutex.release();
+            throw new IllegalTransferType(transfer.getComponentId());
+        }
+        if (transfer.getDestinationDeviceId() != null && !deviceTotalSlots.containsKey(transfer.getDestinationDeviceId())){
+            componentPlacementMutex.release();
+            throw new DeviceDoesNotExist(transfer.getDestinationDeviceId());
+        }
+        if (transfer.getSourceDeviceId() == null && componentPlacement.containsKey(transfer.getComponentId())){
+            componentPlacementMutex.release();
+            throw new ComponentAlreadyExists(transfer.getComponentId()); // SECOND CONSTRUCTOR
+        }
+        if (transfer.getSourceDeviceId() != null && (!componentPlacement.containsKey(transfer.getComponentId()) || !componentPlacement.get(transfer.getComponentId()).equals(transfer.getSourceDeviceId()))){
+            componentPlacementMutex.release();
+            throw new ComponentDoesNotExist(transfer.getComponentId(), transfer.getSourceDeviceId());
+        }
+        if (transfer.getSourceDeviceId() == transfer.getDestinationDeviceId()){
+            componentPlacementMutex.release();
             throw new ComponentDoesNotNeedTransfer(transfer.getComponentId(), transfer.getDestinationDeviceId());
+        }
     }
 
     void start(ComponentTransfer transfer) {
         acquire(GM);
 
-        if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {
-
-            while   (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty() &&                       // someone is waiting
-                    lazyRemove.containsKey(waitingForImport.get(transfer.getSourceDeviceId()).getFirst())){ // the first in que is marked to be removed
-                lazyRemove.remove(waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
-                waitingForImport.get(transfer.getSourceDeviceId()).removeFirst();
-            }
-            
+        // If the transfer is not an addition and there isn't a prevTransfer chosen yet, choose the oldest waiting, remove and release them
+        if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {            
             if (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty()) {
                 prevTransfer.put(transfer, waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
                 nextTransfer.put(waitingForImport.get(transfer.getSourceDeviceId()).getFirst(), transfer);
@@ -140,21 +181,37 @@ public class MyStorageSystem implements StorageSystem {
             if (prevTransfer.get(transfer) != transfer)
                 waitForStart.get(prevTransfer.get(transfer)).release();
         }
-
+        GM.release();
+        
         transfer.prepare();
+        acquire(GM);
+        // If a new transfer has showed up while we were preparing, find it now
+        if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {            
+            if (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty()) {
+                prevTransfer.put(transfer, waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
+                nextTransfer.put(waitingForImport.get(transfer.getSourceDeviceId()).getFirst(), transfer);
+                waitingForImport.get(transfer.getSourceDeviceId()).removeFirst();
+            }
+
+            if (prevTransfer.get(transfer) != transfer)
+                waitForStart.get(prevTransfer.get(transfer)).release();
+        }
+        // Release prevTransfer if they exist otherwise free a slot 
         if (prevTransfer.get(transfer) != transfer)
-            waitForStart.get(prevTransfer.get(transfer)).release();
+            waitForNextTransfer.get(prevTransfer.get(transfer)).release();
         else if (transfer.getSourceDeviceId() != null) {
             deviceFreeSlots.put(transfer.getSourceDeviceId(), deviceFreeSlots.get(transfer.getSourceDeviceId()) - 1);
         }
         GM.release();
 
+        // If the next transfer exists, wait for it, than perform
         if (nextTransfer.get(transfer) != transfer) 
-            acquire(waitForStart.get(transfer));
+            acquire(waitForNextTransfer.get(transfer));
         transfer.perform();
 
-
+        // Clean transfer specyfic values
         waitForStart.remove(transfer);
+        waitForNextTransfer.remove(transfer);
         prevTransfer.remove(transfer);
         nextTransfer.remove(transfer);
     }
@@ -180,7 +237,7 @@ public class MyStorageSystem implements StorageSystem {
         visited.put(current, true);
 
         for (ComponentTransfer edge : waitingForImport.get(current)) {
-            if (lazyRemove.containsKey(edge) || edge.getSourceDeviceId() == null || visited.get(edge.getSourceDeviceId()))
+            if (edge.getSourceDeviceId() == null || visited.get(edge.getSourceDeviceId()))
                 continue;
             res.addLast(edge);
             if (dfs(edge.getSourceDeviceId(), destination, visited, res))
