@@ -133,17 +133,22 @@ public class MyStorageSystem implements StorageSystem {
     void start(ComponentTransfer transfer) {
 
         if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {
-            GM.acquire();
+            try {
+                GM.acquire();
+            } catch(InterruptedException e) {
+                throw new RuntimeException("panic: unexpected thread interruption");
+            }
 
             while   (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty() &&                       // someone is waiting
                     lazyRemove.containsKey(waitingForImport.get(transfer.getSourceDeviceId()).getFirst())){ // the first in que is marked to be removed
                 lazyRemove.remove(waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
-                waitingForImport.removeFirst();
+                waitingForImport.get(transfer.getSourceDeviceId()).removeFirst();
             }
             
             if (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty()) {
                 prevTransfer.put(transfer, waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
-                waitingForImport.removeFirst();
+                nextTransfer.put(waitingForImport.get(transfer.getSourceDeviceId()).getFirst(), transfer);
+                waitingForImport.get(transfer.getSourceDeviceId()).removeFirst();
             }
 
             GM.release();
@@ -151,13 +156,32 @@ public class MyStorageSystem implements StorageSystem {
             waitForStart.get(prevTransfer.get(transfer)).release();
         }
 
-        if (prevTransfer.get(transfer) != transfer) {
-            throw new RuntimeException("Not Implemented");  
+        transfer.prepare();
+        if (prevTransfer.get(transfer) != transfer)
+            waitForStart.get(prevTransfer.get(transfer)).release();
+        else if (transfer.getSourceDeviceId() != null) {
+            try {
+                GM.acquire();
+            } catch(InterruptedException e) {
+                throw new RuntimeException("panic: unexpected thread interruption");
+            }
+            deviceFreeSlots.put(transfer.getSourceDeviceId(), deviceFreeSlots.get(transfer.getSourceDeviceId()) - 1);
+            GM.release();
         }
+
+        if (nextTransfer.get(transfer) != transfer) {
+            try {
+                waitForStart.get(transfer).acquire();
+            } catch(InterruptedException e) {
+                throw new RuntimeException("panic: unexpected thread interruption");
+            }
+        }
+        transfer.perform();
 
 
         waitForStart.remove(transfer);
         prevTransfer.remove(transfer);
+        nextTransfer.remove(transfer);
     }
 
     List <ComponentTransfer> getCycle(ComponentTransfer transfer) {
