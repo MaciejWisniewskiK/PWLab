@@ -43,7 +43,7 @@ public class MyStorageSystem implements StorageSystem {
             waitingForImport.put(deviceId, new LinkedList<>());
         }
 
-        deviceFreeSlots = new ConcurrentHashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for eevery component stored
+        deviceFreeSlots = new ConcurrentHashMap(deviceTotalSlots); // set the number of free slots to number of total slots and decrement them for every component stored
         for (Map.Entry<ComponentId, DeviceId> entry : componentPlacement.entrySet()) {
             deviceFreeSlots.put(entry.getValue(), deviceFreeSlots.get(entry.getValue()) - 1); 
         }
@@ -54,6 +54,7 @@ public class MyStorageSystem implements StorageSystem {
         // COMPONENT PLACEMENT!!!!!!!!!!!!!!!!!!!!!!!!!!
         //GM.acquire();
         waitForStart.put(transfer, new Semaphore(1, true)); // create my semaphore
+        acquire(waitForStart.get(transfer));
         prevTransfer.put(transfer, transfer);
         nextTransfer.put(transfer, transfer);
         //GM.release();
@@ -63,11 +64,7 @@ public class MyStorageSystem implements StorageSystem {
             return;
         }
  
-        try {
-            GM.acquire();
-        } catch(InterruptedException e) {
-            throw new RuntimeException("panic: unexpected thread interruption");
-        }
+        acquire(GM);
 
         if (deviceFreeSlots.get(transfer.getDestinationDeviceId()) > 0) { 
             deviceFreeSlots.put(transfer.getDestinationDeviceId(), deviceTotalSlots.get(transfer.getDestinationDeviceId()) - 1); // take one slot
@@ -81,12 +78,7 @@ public class MyStorageSystem implements StorageSystem {
         if (cycle == null) {
             waitingForImport.get(transfer.getDestinationDeviceId()).addLast(transfer);
             GM.release();
-
-            try {
-                waitForStart.get(transfer).acquire();
-            } catch(InterruptedException e) {
-                throw new RuntimeException("panic: unexpected thread interruption");
-            }
+            acquire(waitForStart.get(transfer));
             start(transfer);
             return;
         }
@@ -105,8 +97,6 @@ public class MyStorageSystem implements StorageSystem {
         }
         prevTransfer.put(currentCT, transfer);
         nextTransfer.put(transfer, currentCT);
-
-        //GM.release();
 
         for (ComponentTransfer ct : cycle) {
             waitForStart.get(ct).release();
@@ -131,13 +121,9 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     void start(ComponentTransfer transfer) {
+        acquire(GM);
 
         if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {
-            try {
-                GM.acquire();
-            } catch(InterruptedException e) {
-                throw new RuntimeException("panic: unexpected thread interruption");
-            }
 
             while   (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty() &&                       // someone is waiting
                     lazyRemove.containsKey(waitingForImport.get(transfer.getSourceDeviceId()).getFirst())){ // the first in que is marked to be removed
@@ -151,8 +137,6 @@ public class MyStorageSystem implements StorageSystem {
                 waitingForImport.get(transfer.getSourceDeviceId()).removeFirst();
             }
 
-            GM.release();
-
             if (prevTransfer.get(transfer) != transfer)
                 waitForStart.get(prevTransfer.get(transfer)).release();
         }
@@ -161,22 +145,12 @@ public class MyStorageSystem implements StorageSystem {
         if (prevTransfer.get(transfer) != transfer)
             waitForStart.get(prevTransfer.get(transfer)).release();
         else if (transfer.getSourceDeviceId() != null) {
-            try {
-                GM.acquire();
-            } catch(InterruptedException e) {
-                throw new RuntimeException("panic: unexpected thread interruption");
-            }
             deviceFreeSlots.put(transfer.getSourceDeviceId(), deviceFreeSlots.get(transfer.getSourceDeviceId()) - 1);
-            GM.release();
         }
+        GM.release();
 
-        if (nextTransfer.get(transfer) != transfer) {
-            try {
-                waitForStart.get(transfer).acquire();
-            } catch(InterruptedException e) {
-                throw new RuntimeException("panic: unexpected thread interruption");
-            }
-        }
+        if (nextTransfer.get(transfer) != transfer) 
+            acquire(waitForStart.get(transfer));
         transfer.perform();
 
 
@@ -215,5 +189,13 @@ public class MyStorageSystem implements StorageSystem {
         }
 
         return false;
+    }
+
+    private void acquire(Semaphore s) {
+        try {
+            s.acquire();
+        } catch(InterruptedException e) {
+            throw new RuntimeException("panic: unexpected thread interruption");
+        }
     }
 }
