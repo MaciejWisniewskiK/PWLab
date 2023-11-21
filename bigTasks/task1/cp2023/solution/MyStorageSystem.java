@@ -30,7 +30,8 @@ public class MyStorageSystem implements StorageSystem {
     private Map<DeviceId, LinkedList<ComponentTransfer> > waitingForImport = new ConcurrentHashMap<>();
 
     private Map<ComponentTransfer, Semaphore> waitForStart = new ConcurrentHashMap<>(); 
-    private Map<ComponentTransfer, ComponentTransfer> prevTransfer = new ConcurrentHashMap<>(); 
+    private Map<ComponentTransfer, ComponentTransfer> prevTransfer = new ConcurrentHashMap<>();
+    private Map<ComponentTransfer, ComponentTransfer> nextTransfer = new ConcurrentHashMap<>();
 
     private Map<ComponentTransfer, Boolean> lazyRemove = new ConcurrentHashMap<>();
 
@@ -54,6 +55,7 @@ public class MyStorageSystem implements StorageSystem {
         //GM.acquire();
         waitForStart.put(transfer, new Semaphore(1, true)); // create my semaphore
         prevTransfer.put(transfer, transfer);
+        nextTransfer.put(transfer, transfer);
         //GM.release();
 
         if (transfer.getDestinationDeviceId() == null) { // If the transfer is a removal of a file, immidiately start
@@ -99,8 +101,10 @@ public class MyStorageSystem implements StorageSystem {
         for (ComponentTransfer ct : cycle) {
             currentCT = ct;
             prevTransfer.put(nextCT, currentCT);
+            nextTransfer.put(currentCT, nextCT);
         }
         prevTransfer.put(currentCT, transfer);
+        nextTransfer.put(transfer, currentCT);
 
         //GM.release();
 
@@ -127,9 +131,33 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     void start(ComponentTransfer transfer) {
-        // remove waitforstart and prevtransfer
-        // if prevtransfer == transfer than no prevtransfer
-        throw new RuntimeException("Not Implemented");
+
+        if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {
+            GM.acquire();
+
+            while   (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty() &&                       // someone is waiting
+                    lazyRemove.containsKey(waitingForImport.get(transfer.getSourceDeviceId()).getFirst())){ // the first in que is marked to be removed
+                lazyRemove.remove(waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
+                waitingForImport.removeFirst();
+            }
+            
+            if (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty()) {
+                prevTransfer.put(transfer, waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
+                waitingForImport.removeFirst();
+            }
+
+            GM.release();
+
+            waitForStart.get(prevTransfer.get(transfer)).release();
+        }
+
+        if (prevTransfer.get(transfer) != transfer) {
+            throw new RuntimeException("Not Implemented");  
+        }
+
+
+        waitForStart.remove(transfer);
+        prevTransfer.remove(transfer);
     }
 
     List <ComponentTransfer> getCycle(ComponentTransfer transfer) {
