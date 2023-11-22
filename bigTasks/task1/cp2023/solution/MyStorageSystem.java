@@ -268,6 +268,9 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     private Boolean dfs(DeviceId current, DeviceId destination, Map<DeviceId, Boolean> visited, LinkedList<ComponentTransfer> res) {
+        if (current.equals(destination))
+            return true;
+        
         visited.put(current, true);
 
         for (ComponentTransfer edge : waitingForImport.get(current)) {
