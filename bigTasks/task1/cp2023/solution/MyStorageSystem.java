@@ -27,6 +27,7 @@ public class MyStorageSystem implements StorageSystem {
 
     // A mutex for searching/modifying the graph (deviceFreeSlots and waitingForImport)
     private Semaphore GM = new Semaphore(1, true);
+    private Map<DeviceId, LinkedList<ComponentTransfer> > movingOut             = new ConcurrentHashMap<>();
     private Map<DeviceId, Integer> deviceFreeSlots                              = new ConcurrentHashMap<>();
     private Map<DeviceId, LinkedList<ComponentTransfer> > waitingForImport      = new ConcurrentHashMap<>();
 
@@ -44,9 +45,10 @@ public class MyStorageSystem implements StorageSystem {
             isBeingTransfered.put(componentId, false);
         }
         
-        // Graph data
+        // Graph structure
         for (DeviceId deviceId : deviceTotalSlots.keySet()) {
             waitingForImport.put(deviceId, new LinkedList<>());
+            movingOut.put(deviceId, new LinkedList<>());
         }
     
         // Device specific data
@@ -86,6 +88,21 @@ public class MyStorageSystem implements StorageSystem {
             start(transfer);
             return;
         }
+
+        // If there is someone moving out of the destination device, mark myself as their prev and start
+        if (!movingOut.get(transfer.getDestinationDeviceId()).isEmpty()) {
+            ComponentTransfer nextCT = movingOut.get(transfer.getDestinationDeviceId()).getFirst();
+            movingOut.get(transfer.getDestinationDeviceId()).removeFirst();
+
+            prevTransfer.put(nextCT, transfer);
+            nextTransfer.put(transfer, nextCT);
+
+            GM.release();
+
+            start(transfer);
+            return;
+        }
+
 
         List<ComponentTransfer> cycle = getCycle(transfer);
 
@@ -176,13 +193,26 @@ public class MyStorageSystem implements StorageSystem {
     private void start(ComponentTransfer transfer) {
         acquire(GM);
         tryGetPrev(transfer);
+
+        // if still no prevTransfer add myself to the movingOut
+        if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {
+            movingOut.get(transfer.getSourceDeviceId()).addLast(transfer);
+        }
+
         GM.release();
 
         transfer.prepare();
 
         acquire(GM);
+
+        // if no transfer has requested my slot while preparing, remove myslef from moving out       
+        if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {
+            movingOut.get(transfer.getSourceDeviceId()).remove(transfer);
+        }
+        
+        // this shouldn't be possible now
         // If a new prev transfer has showed up while we were preparing, get it now
-        tryGetPrev(transfer);
+        // tryGetPrev(transfer);
 
         // Release prevTransfer if they exist otherwise free a slot 
         if (prevTransfer.get(transfer) != transfer)
