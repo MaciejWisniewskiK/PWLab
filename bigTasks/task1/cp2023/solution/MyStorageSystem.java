@@ -134,7 +134,7 @@ public class MyStorageSystem implements StorageSystem {
         componentPlacementMutex.release();
     }
 
-    void checkIfTransferLegal(ComponentTransfer transfer) throws TransferException {
+    private void checkIfTransferLegal(ComponentTransfer transfer) throws TransferException {
         // if source is null and destination is null
         if (transfer.getSourceDeviceId() == null && transfer.getDestinationDeviceId() == null){
             componentPlacementMutex.release();
@@ -147,8 +147,9 @@ public class MyStorageSystem implements StorageSystem {
         }
         // if the transfer is addition and the component exists
         if (transfer.getSourceDeviceId() == null && componentPlacement.containsKey(transfer.getComponentId())){
+            DeviceId currentPlacement = componentPlacement.get(transfer.getComponentId());
             componentPlacementMutex.release();
-            throw new ComponentAlreadyExists(transfer.getComponentId()); // SECOND CONSTRUCTOR
+            throw new ComponentAlreadyExists(transfer.getComponentId(), currentPlacement);
         }
         // if the transfer is not addition and (the component doesn't exist or is on a different device)
         if (transfer.getSourceDeviceId() != null && (!componentPlacement.containsKey(transfer.getComponentId()) || !componentPlacement.get(transfer.getComponentId()).equals(transfer.getSourceDeviceId()))){
@@ -172,7 +173,7 @@ public class MyStorageSystem implements StorageSystem {
         }
     }
 
-    void start(ComponentTransfer transfer) {
+    private void start(ComponentTransfer transfer) {
         acquire(GM);
         tryGetPrev(transfer);
         GM.release();
@@ -204,7 +205,7 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     // If the transfer is not an addition and there isn't a prevTransfer chosen yet, choose the oldest waiting, remove and release them
-    void tryGetPrev(ComponentTransfer transfer) {
+    private void tryGetPrev(ComponentTransfer transfer) {
         if (transfer.getSourceDeviceId() != null && prevTransfer.get(transfer) == transfer) {            
             if (!waitingForImport.get(transfer.getSourceDeviceId()).isEmpty()) {
                 prevTransfer.put(transfer, waitingForImport.get(transfer.getSourceDeviceId()).getFirst());
@@ -218,7 +219,7 @@ public class MyStorageSystem implements StorageSystem {
     }
 
     // If there is a cycle, return it in order from transfer.source to transfer.destination without myself, otherwise return null
-    List <ComponentTransfer> getCycle(ComponentTransfer transfer) {
+    private List <ComponentTransfer> getCycle(ComponentTransfer transfer) {
         // If I am addition or removal, there is no cycle
         if (transfer.getSourceDeviceId() == null || transfer.getDestinationDeviceId() == null)
             return null;
@@ -236,7 +237,7 @@ public class MyStorageSystem implements StorageSystem {
         return null;
     }
 
-    Boolean dfs(DeviceId current, DeviceId destination, Map<DeviceId, Boolean> visited, LinkedList<ComponentTransfer> res) {
+    private Boolean dfs(DeviceId current, DeviceId destination, Map<DeviceId, Boolean> visited, LinkedList<ComponentTransfer> res) {
         visited.put(current, true);
 
         for (ComponentTransfer edge : waitingForImport.get(current)) {
