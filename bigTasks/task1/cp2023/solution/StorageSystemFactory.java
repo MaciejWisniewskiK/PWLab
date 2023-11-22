@@ -14,13 +14,6 @@ import cp2023.base.ComponentId;
 import cp2023.base.DeviceId;
 import cp2023.base.StorageSystem;
 
-/*
-Jeśli konfiguracja systemu dostarczona jako argumenty tej metody jest niepoprawna 
-(np. jakiś komponent jest przypisany do urządzenia bez podanej pojemności lub liczba 
-komponentów przypisanych do jakiegoś urządzenia przekracza jego pojemność), to metoda powinna 
-podnieść wyjątek java.lang.IllegalArgumentException z odpowiednim komunikatem tekstowym.
-*/
-
 public final class StorageSystemFactory {
 
     public static StorageSystem newSystem(
